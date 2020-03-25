@@ -9,7 +9,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, message= F, warning =F)
 ```
 
-a
 # Model implementation
 
 Here I am going to describe the model of multi-strain multi-phage co-exsistance developed by *Jover et al.* (2013) and my implementation of it in R and Python. Jover's model describe the population dynamic of a system with multiple hosts (*H~n~*) under predation by multiple phages (*V~n~*) with the following system of differential equations:
