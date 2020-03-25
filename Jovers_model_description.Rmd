@@ -1,0 +1,449 @@
+---
+title: 'Jover''s model: description_2'
+author: "Mam Malick Sy Ndiaye"
+date: "25/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message= F, warning =F)
+```
+
+a
+# Model implementation
+
+Here I am going to describe the model of multi-strain multi-phage co-exsistance developed by *Jover et al.* (2013) and my implementation of it in R and Python. Jover's model describe the population dynamic of a system with multiple hosts (*H~n~*) under predation by multiple phages (*V~n~*) with the following system of differential equations:
+
+![](../Images/Jovers_system.png)
+
+The parameters of this model correspond to life-history-history traits of the hosts and the phages, where:
+
+>
+
+* *r~i~* [h^-1^]: growth rate of host i
+* *K* [cells/ml]: bacterial carrying capacity of the system
+* *M~ij~*: infection matrix where the rows correspond to the hosts and the column correspond to the phages. The values in the matrix are either 1 if phage j can infect host i or 0 otherwise. 
+* *$\phi$~j~* [ml/(virusesxh)]: Absorption rate of virus j. This model assumes no delay between the phage absorption and the cell lysis, which may be problematic.
+* *$\beta$~j~* [viruses/cell]: Bust size of virus j (i.e. the number of new virus that get produced following an infection by single phage)
+* *m~j~* [h^-1^]: virus decay outside of the host cell.
+
+I implemented this model system in R.
+```{r Model construction}
+Phage_samples<- paste("P_", 10:1, sep="")
+Host_samples<- paste("H_", 10:1, sep="")
+rank<- c(1:10)
+
+jover_mod<- function(t, state,parameters){ # function that returns the state of the populations at time t
+  with(as.list(c(state,parameters)),{
+    H<- state[grepl("H", names(state))]
+    V<- state[grepl("V", names(state))]
+    
+    dH<- r*H*(1-(sum(H)/k))-colSums(t(red_matrix*H)*V*Ar)
+    dV<- rowSums(t(red_matrix*H)*Bs*Ar*V)-(m*V)
+    
+    list(c(dH, dV))
+  })
+}
+```
+
+First we will consider cases where the infection matrix is perfectly nested.
+```{r Create infection matrix}
+# function that takes the number of virus-host pairs and returns a perfectly nested infection matrix
+inf_matrix<- function(cpl_size, perfect=T){
+  
+  mat<- matrix(rep(0, cpl_size^2),  ncol=cpl_size, nrow = cpl_size)
+  for(i in 1:cpl_size){
+  mat[i,]<- c(rep(0, cpl_size-i),rep(1, i) )
+  }
+  
+  colnames(mat)<- paste("P", 1:cpl_size, sep = "")
+  rownames(mat)<- paste("H", 1:cpl_size, sep="")
+  
+  return(mat)
+}
+
+inf_matrix(10) #test the function
+```
+In these kind of matrixes, the host rank correspond to the number of phages that can infect the host while the virus rank correspond to the number of host that are sensitive to the virus. For instance, H2 can be infected by 2 phages, P9 (can infect 9 hosts) and P10 (can infect 10 hosts).
+
+# Co-exsistance conditions
+To find the conditions of co-exsistance of all the strain and phages in the system, we need to find the conditions in which the populations reach steady state. This means finding the solution for $dH~i~/dt=0$ and $dV~i~/dt=0$ for the 2n pairs of equations simultaneously. To solve the ODEs symbolically, I will use a combination of python (sympy package) and sageMath (like MATLAB but worse, it is gratis though):
+
+```{r Install python}
+library(reticulate) # use python on Rmarkdown
+```
+```{python Create Symbolic equations}
+import sympy as sp
+import numpy as np
+from IPython.display import display
+from sympy.interactive import printing
+printing.init_printing(use_latex=True)
+
+# Create the Symbols
+n=4 #number of pairs-1 (= 5 pairs phage-bacteria)
+i=sp.Idx("i", (0,n)) # Symbolic representation of host i (from 0 to n)
+j=sp.Idx("j", (0,n)) # Symbolic representation of virus j (from 0 to n)
+
+H_s= sp.symbols("H:"+str(n+1), integer=True)
+V_s=sp.symbols("V:"+str(n+1), integer=True)
+Ar_s= sp.symbols("Ar:"+str(n+1), integer=True) #Absorption rate
+Bs_s= sp.symbols("Bs:"+str(n+1), integer=True) #Burst Size
+r_s= sp.symbols("r:"+str(n+1), integer=True) #growth rate
+m_s= sp.symbols("m:"+str(n+1), integer=True) #Virus decay
+K= sp.Symbol("K", integer=True) #carrying size
+H=sp.Array(H_s) # Array containing n Host symbols
+V=sp.Array(V_s) # Array containing n virus symbols
+Ar=sp.Array(Ar_s) # Array containing n Absorption rate symbols
+Bs=sp.Array(Bs_s) # Array containing n Burst Size symbols
+r=sp.Array(r_s) # Array containing n growth rate symbols
+m=sp.Array(m_s) # Array containing n virus decay symbols
+
+M= []
+for q in range(1,(n+2)):
+    tmp=list(np.repeat([0,1], [(n+1)-q,q], axis=0))
+    M.append(tmp)
+M=sp.Matrix(M) # Infection matrix
+
+# Create a list expressions for the dynamic of each host (exprs1) and phage (exprs2)
+exprs1=[]
+exprs2=[]
+for k in range(n+1):
+    exprs1.append(r[k]*H[k]*(1-sp.Sum(H[i], (i, 0,n)).doit()/K)-sp.Sum((M[k,j]*Ar[j]*V[j]*H[k]), (j,0,n)).doit())
+    exprs2.append(sp.Sum((M[i,k]*Ar[k]*Bs[k]*V[k]*H[i]), (i,0,n)).doit()- m[k]*V[k])
+display(exprs1, exprs2,) 
+
+# Put the exprassion in a list of equations (=0) and make a list of variables for wich the equations must be solved (fors; H0, V0, H1...)
+eqs=[]
+fors=[]
+for i in range(n+1):
+    eqs.append(sp.Eq(0, exprs1[i]))
+    eqs.append(sp.Eq(0, exprs2[i]))
+    fors.append(H[i])
+    fors.append(V[i])
+```
+
+Python is really slow at solving systems of equations and can manage to generate the results for maximum 2 pairs virus-hosts. Thus, I must employ sageMath (https://www.sagemath.org/) to solve the equations that I have built. Unfortunately, I cannot manage to run sageMath on r, so I will paste the output of the next chuck as an image.
+```{python solve symbolic equations, eval= F}
+import sage.interfaces.sympy
+from sage.interfaces.sympy import sympy_init
+sympy_init()
+
+sage_exprs=[]
+for i in range(len(exprs1)):
+    sage_exprs.append(exprs1[i]._sage_())
+    sage_exprs.append(exprs2[i]._sage_()) # Transform the sympy expressions in sageMath expressions
+
+sage_fors=[]
+for i in range(len(fors)):
+    sage_fors.append(fors[i]._sage_()) # Transform the sympy symbols in sageMath symbols
+
+
+    
+sage_eqs=[]
+for i in range((n+1)*2):
+    eq_name=("eq"+str(i))
+    globals()[eq_name] = sage_exprs[i]==0
+    sage_eqs.append(globals()[eq_name]) #Create Sympy equations
+ 
+sage_sol=solve(sage_eqs, sage_fors ) # Solve the equations for each bacteria and phage
+main_sol=sage_sol[len(sage_sol)-1] # We take only the last solution because is the one that considers coexistance of every member of the community
+
+for i in main_sol:
+   show(LatexExpr((i.expand()))) # Display solutions in beautiful LaTex 
+```
+
+![](../Images/Jovers_5pairs_sol.png)
+
+By playng with the number of pairs and studying the solutions, we can conclude that the equilibrum desity of *H~n~* (*Heq~n~*) is determined solely by the life-history traits ($h_j= m_j/(\phi_j \beta_j)$) of V~1~ (=*h~1~*), that infects exclusively *H~n~*. *h~j~* is defined as "the host density necessary to support the virus infecting it" and it is a meausure of infectivity: the larger is *h~j~*, the less infective is $V_j$. Therefore, $Heq_{n-1} = h_2 - h_1$ beacuse the density of host *n* is already under control by *V~1~*. Thus,  the host density is determined by the differece between the life-history traits of the virus with higher range that infect the host and the virus with the higher range and that do not infect the host.it follows that $Heq_{1} = h_n - h_{n-1}$. finally, we can conclude that the total bacterial biomass at equilibrium is: $\sum_{j=1}^{n}Heq_j= m_n/(\phi_n \beta_n)$.
+The formula for *Veq*  is more complex and is determined by both host and viral life-history traits. However, what is important here is that Veq~1~ is dependant on the difference between r~n~ and r~n-1~, Veq~2~ is dependant on the difference between r~n-1~ and r~n-2~, and Veq~n~ is dependant on r~1~. We can summarize the densities at equilibrium as: 
+
+![](../Images/Jovers_Eqsystem.png)
+
+It follow that coexsistance between all member of the community can be acheived only if:
+
+![](../Images/Jovers_CoEx_conditions.png)
+
+>
+
+* condition (4) must be respected, otherwise at least one host density will be <0
+* condition (5) must be respected, otherwise at least one phage density will be <0
+* condition (6) must be respected, otherwise the bacterial biomass will surpass carrying capacitig, driving at least one host extinct
+
+# Simulations of co-exsistance
+Now, we can simulate the dynamics of phage-bacteria interactions. First, we will simulate a system in wich condition (4-6) are respected (*Fig. 3 of Jovers et al, 2013*)
+
+```{r stable 2-pair community}
+library(deSolve)
+library(ggplot2)
+library(knitr)
+library(reshape2)
+
+couple_size= 2 # 2 host-phage pairs
+red_matrix<- inf_matrix(couple_size)
+
+host_names<- paste("H", 1:couple_size, sep="")
+phage_names<- paste("V", 1:couple_size, sep="")
+
+#set the parameters and initial conditions
+parameters<- list(Ar= c(5e-9, 5e-9), m= c(0.0681, 0.1047), Bs= c(24, 10), r=c(0.1760,0.9914), k=1e7)
+times<- seq(1, 1000, by = 10)
+
+# Equilibrium densities
+h<- parameters$m/(parameters$Ar*parameters$Bs) # h_i
+V_eq<- c(rev(diff(parameters$r)), parameters$r[1])/parameters$Ar*(1-(h[length(h)]/parameters$k)) # Virus density at equilibrium
+H_eq<- c(abs(diff(rev(h))),  h[1]) # Host densities at equilibrium
+total_biomass<-  sum(parameters$m/(parameters$Ar*parameters$Bs)) 
+
+rank_info<- data.frame("Eq_host_den"= H_eq, "Eq_virus_den"=V_eq, "growth_rate"=parameters$r, "h[i]"= h) # Table with information on densities in function of rank
+rownames(rank_info)<- paste("Rank", 1:length(h))
+
+
+Fig3_bar_r<-ggplot(data = rank_info, aes(x= as.factor(c(1,2)), y=growth_rate, fill=host_names))+
+  geom_bar(stat = "identity")+
+  xlab("rank")+
+  ylab("r [hours^-1]") # barplot of growth rates
+Fig3_bar_hi<-ggplot(data = rank_info, aes(x= as.factor(c(1,2)), y=h.i./1e4, fill=phage_names))+
+  geom_bar(stat = "identity")+
+  xlab("rank")+
+  ylab("hi[cells/ml]") # barplot of h_is
+
+# solve and plot the model
+state<-c(h,V_eq) # initial densities at t=0 (I use the equilibrium densities for convenience)
+names(state)<- c(host_names, phage_names)
+res<- ode(y=state, times = times, func = jover_mod, parms = parameters, method = "ode45") # Solve the system of ODEs thanks to the Jover_mod function
+
+#plot(res) #delete comment to plot singular dynamics 
+mod_data<- as.data.frame(res)
+
+Fig3_plot_H<- ggplot(data=mod_data)+
+  geom_line(aes(time, H1, color="H1"))+
+  geom_line(aes(time, H2, color="H2")) +
+  scale_y_continuous(name="Host [cells/ml] x10e6", breaks=c(seq(from=0, to=2.5, by=0.5)*1e6), labels=seq(from=0, to=2.5, by=0.5), limits=c(0,2.5)*1e6)+
+  scale_x_continuous(name="time [hours]", breaks=seq(0,1000,200), labels=seq(0,1000,200))
+  
+
+Fig3_plot_V<- ggplot(data=mod_data)+
+  geom_line(aes(time, V1, color="V1"))+
+  geom_line(aes(time, V2, color="V2")) +
+  scale_y_continuous(name="Virus [VLP/ml] x 10^8", breaks=c(seq(from=0, to=2, by=0.5)*1e8), labels=seq(from=0, to=2, by=0.5), limits=c(0,2)*1e8) +
+  scale_x_continuous(name="time [hours]", breaks=seq(0,1000,200), labels=seq(0,1000,200))
+
+library(cowplot)
+plot_grid(Fig3_bar_r, Fig3_plot_H, Fig3_bar_hi, Fig3_plot_V, ncol = 2, nrow = 2) 
+kable(rank_info)
+```
+As expected, stable co-exsistance is acheived between the members of the community.
+
+Now we can explore a situtation in wich condition (5) is not respected (Fig. 4 of *Jover et al*., 2013).
+```{r Fig.4}
+library(deSolve)
+library(ggplot2)
+library(knitr)
+
+# chose how many couples we want
+couple_size= 2
+red_matrix<- inf_matrix(couple_size)
+host_names<- paste("H", 1:couple_size, sep="")
+phage_names<- paste("V", 1:couple_size, sep="")
+
+#set the parameters and initial conditions
+parameters<- list(Ar= c(5e-9, 5e-9), m= c(0.0100, 0.0650), Bs= c(100, 100), r=c(1.0500,0.300), k=1e8)
+times<- seq(1, 10000, by = 100)
+
+# Equilibrium densities
+h<- parameters$m/(parameters$Ar*parameters$Bs)
+V_eq<- c(rev(diff(parameters$r)), parameters$r[1])/parameters$Ar*(1-(h[length(h)]/parameters$k))
+H_eq<- c(abs(diff(rev(h))),  h[1])
+total_biomass<-  sum(parameters$m/(parameters$Ar*parameters$Bs))
+
+rank_info<- data.frame("Eq_host_den"=H_eq, "Eq_virus_den"=V_eq, "growth_rate"=parameters$r, "h[i]"= h)
+rownames(rank_info)<- paste("Rank", 1:length(h))
+
+Fig4_bar_r<- ggplot(data = rank_info, aes(x= as.factor(c(1,2)), y=growth_rate, fill=host_names))+
+  geom_bar(stat = "identity")+
+  xlab("rank")+
+  ylab("r [hours^-1]")
+Fig4_bar_hi<- ggplot(data = rank_info, aes(x= as.factor(c(1,2)), y=h.i./1e4, fill=phage_names))+
+  geom_bar(stat = "identity")+
+  xlab("rank")+
+  ylab("hi[cells/ml]x10^4")
+
+
+#solve and plot the model
+state<-c(H_eq,H_eq)
+names(state)<- c(host_names, phage_names)
+res<- ode(y=state, times = times, func = jover_mod, parms = parameters, method = "ode45")
+#plot(res)
+
+mod_data<- as.data.frame(res)
+
+Fig4_plot_H<- ggplot(data=mod_data)+
+  geom_line(aes(time, H1, color="H1"))+
+  geom_line(aes(time, H2, color="H2")) +
+  scale_y_continuous(name="Host [cells/ml] x10e5", breaks=c(seq(from=0, to=6, by=1)*1e5), labels=seq(from=0, to=6, by=1), limits=c(0,6)*1e5)+
+  xlab("Time [hours]")
+
+Fig4_plot_V<- ggplot(data=mod_data)+
+  geom_line(aes(time, V1, color="V1"))+
+  geom_line(aes(time, V2, color="V2")) +
+  scale_y_continuous(name="Virus [VLP/ml] x10e8", breaks=c(seq(from=0, to=3.5, by=0.5)*1e8), labels=seq(from=0, to=3.5, by=0.5), limits=c(0,3.5)*1e8)+
+  xlab("Time [hours]")
+
+library(cowplot)
+plot_grid(Fig4_bar_r, Fig4_plot_H, Fig4_bar_hi, Fig4_plot_V, ncol = 2, nrow = 2)
+kable(rank_info)
+```
+In this case, $r_1>r_2$, which makes the $Veq_1>0$, resulting in the extinction of $V_1$. Without $V_1$, only $V_2$ remains to control the bacterial growth. since $r_1>r_2$, $H_1$ end up outcompeting $H_2$ and driving it to extinction. 
+
+Until conditions (4-6) are satisfied, with a perfect infection network we can observe coexistance between an infinite number of host-phage pairs. We will simulate co-exsistance between 5 host-bacteria pairs (Fig. 6 of *jover et al.*, 2013).
+```{r Fig.6}
+library(deSolve)
+library(ggplot2)
+library(knitr)
+
+# chose how many couples we want and create an infection matrix
+couple_size= 5
+host_names<- paste("H", 1:couple_size, sep="")
+phage_names<- paste("V", 1:couple_size, sep="")
+
+red_matrix<- inf_matrix(couple_size)
+
+#set the parameters and initial conditions
+parameters<- list(Ar= rep(5e-9, couple_size), m= c(0.0090, 0.0270,0.0548,0.0922,0.1392), Bs= c(20, 40,60,80,100), r=c(0.3162,0.6325, 0.8367, 1.1000, 1.1400), k=1e7)
+times<- seq(0, 20000, by = 100)
+
+#Equilibrium densities
+h<- parameters$m/(parameters$Ar*parameters$Bs)
+V_eq<- c(rev(diff(parameters$r)), parameters$r[1])/parameters$Ar*(1-(h[length(h)]/parameters$k))
+H_eq<- c(abs(diff(rev(h))),  h[1])
+total_biomass<-  sum(parameters$m/(parameters$Ar*parameters$Bs))
+
+rank_info<- data.frame("Eq_host_den"=H_eq, "Eq_virus_den"=V_eq, "growth_rate"=parameters$r, "h[i]"= h)
+rownames(rank_info)<- paste("Rank", 1:length(h))
+
+Fig6_bar_r<-ggplot(data = rank_info, aes(x= c(1:5), y=growth_rate, fill=rownames(red_matrix)))+
+  geom_bar(stat = "identity")+
+  xlab("rank")+
+  ylab("r [hours^-1]")
+Fig6_bar_hi<-ggplot(data = rank_info, aes(x= c(1:5), y=h.i./1e5, fill= colnames(red_matrix)))+
+  geom_bar(stat = "identity")+
+  xlab("rank")+
+  ylab("hi[cells/ml]x10^5")
+
+#solve and plot the model
+state<-c(h,V_eq)
+names(state)<- c(host_names, phage_names)
+
+res<- ode(y=state, times = times, func = jover_mod, parms = parameters, method = "ode45")
+#plot(res)
+
+mod_data<- as.data.frame(res)
+
+Fig6_plot_H<-ggplot(data=mod_data)+
+  geom_line(aes(time, H1, color="H1"))+
+  geom_line(aes(time, H2, color="H2")) +
+  geom_line(aes(time, H3, color="H3")) +
+  geom_line(aes(time, H4, color="H4")) +
+  geom_line(aes(time, H5, color="H5")) +
+  scale_y_continuous(name="Host [cells/ml] x10^5", breaks=c(seq(from=0, to=5, by=1)*1e5), labels=seq(from=0, to=5, by=1), limits=c(0,5)*1e5)+
+  xlab("Time [hours]")
+
+
+Fig6_plot_V<- ggplot(data=mod_data)+
+  geom_line(aes(time, V1, color="V1"))+
+  geom_line(aes(time, V2, color="V2")) +
+  geom_line(aes(time, V3, color="V3")) +
+  geom_line(aes(time, V4, color="V4")) +
+  geom_line(aes(time, V5, color="V5")) +
+    scale_y_continuous(name="Virus [VLPs/ml] x10^7", breaks=c(seq(from=0, to=15, by=5)*1e7), labels=seq(from=0, to=15, by=5), limits=c(0,15)*1e7)+
+  xlab("Time [hours]")
+
+library(cowplot)
+plot_grid(Fig6_bar_r, Fig6_plot_H, Fig6_bar_hi, Fig6_plot_V, ncol = 2, nrow = 2)
+kable(rank_info)
+```
+As expected, co-existence is attained. 
+
+# Imperfectly nested Infection Matrix
+All the above-mentioned results are obtained in the case of a perfectly nested infection matrix. If the matrix is imperfectly nested, we can consider in two types of situations: The matrix is invertible or the matrix is singular. 
+
+## Example of invertible matrix
+```{r iversible matrix}
+inv_matrix<- inf_matrix(4)
+inv_matrix[3,2]<-0
+inv_matrix[2,2]<-1
+inv_matrix[3,1]<-1
+
+inv_matrix
+
+paste("determinant:", det(inv_matrix)) # if the determinant is !=0, the matrix is invertible, otherwise is singular
+```
+An imperfectly nested invertible matrix corresponds to an infection network where there is no overlap between the host ranges of the phages
+
+## Example of singular matrix
+```{r singular matrix}
+sing_matrix<- inf_matrix(4)
+sing_matrix[3,1]<-1
+
+sing_matrix
+
+paste("determinant:", det(sing_matrix)) # if the determinant is !=0, the matrix is invertible, otherwise is singular
+```
+An imperfectly nested invertible matrix corresponds to an infection network where there is host range overlap between 2 or more phages. 
+
+To determinate wether a co-exsistence is possible in these two cases, jover and collegues express the equilibrium densities of viruses and hosts in the following terms:
+![](../Images/Jovers_Eqvector.png)
+
+An equation of type $AX=B$, where *A* is a matrix while *X* and *B* are vectors, has a single solution: $X=BA^{-1}$. Therefore, to solve the system A needs to be invertible and system (7) has a solution only if M is invertible. Thus, if there is _no_ host range overlap between phages, co-exsistance is possible in an imperfectly nested infection matrix. For every inverible infection network will exsist a combination of bacterial and viral life-history trais that will allow positive equilibrum densities for all members of the communities (similar to condition 4-6). We will simulate co-exsistance between 4 host-bacteria pairs in an imperfectly nested and inversible infection network (Fig. 8 of *jover et al.*, 2013).
+
+```{r}
+library(deSolve)
+library(ggplot2)
+
+# chose how many couples we want and create an infection matrix
+couple_size= 4
+red_matrix<- inv_matrix
+host_names<- paste("H", 1:couple_size, sep="")
+phage_names<- paste("V", 1:couple_size, sep="")
+
+#set the parameters and initial conditions
+parameters<- list(Ar= rep(5e-9, couple_size), m= c(0.0100, 0.0375,0.0650,0.0925), Bs= c(20, 46,70,96), r=c(0.4472,0.7583, 0.9747, 1.1511), k=1e7)
+times<- seq(0, 50000, by = 100)
+
+#solve and plot the model
+state<-rep(10e4, couple_size*2)
+names(state)<- c(host_names, phage_names)
+
+res<- ode(y=state, times = times, func = jover_mod, parms = parameters, method = "ode45")
+#plot(res)
+
+mod_data<- as.data.frame(res)
+
+Fig8_plot_H<-ggplot(data=mod_data)+
+  geom_line(aes(time, H1, color="H1"))+
+  geom_line(aes(time, H2, color="H2")) +
+  geom_line(aes(time, H3, color="H3")) +
+  geom_line(aes(time, H4, color="H4")) +
+  scale_y_continuous(name="Host [cells/ml] x10^4", breaks=c(seq(from=0, to=15, by=5)*1e4), labels=seq(from=0, to=15, by=5), limits=c(0,15)*1e4)+
+  xlab("Time [hours]")
+
+
+Fig8_plot_V<- ggplot(data=mod_data)+
+  geom_line(aes(time, V1, color="V1"))+
+  geom_line(aes(time, V2, color="V2")) +
+  geom_line(aes(time, V3, color="V3")) +
+  geom_line(aes(time, V4, color="V4")) +
+    scale_y_continuous(name="Virus [VLPs/ml] x10^7", breaks=c(seq(from=2, to=14, by=2)*1e7), labels=seq(from=2, to=14, by=2), limits=c(0,14)*1e7)+
+  xlab("Time [hours]")
+
+library(cowplot)
+plot_grid(Fig8_plot_H, Fig8_plot_V, ncol = 1, nrow = 2)
+```
+As expected, co-existance is attained. 
+
+If the matrix is singular, the system $AX=B$ has either no or infinite solutions. Thus, for all intents and porpuses co-exsistance is not possible when overlap occours between the host ranges of two or more phages. However, the authors point out that a solution can be found if we assume that the absorption rate and burst size of phages change from host to host. This assumption is likely more biologically correct and would trasorm the matrix M in a weighted matrix, insed of a binary matrix. Thus, each element of M would correspond to the weight of the virus life-history traits on each host. In this case, the matrix can be invertible also with host ranges overlap and a solution to system (7) can be found. (maybe we should include it in the model)
+
+_p.s.: I'm not super good in math, so this whole section on inversible/singular matrixes may be wrong._
+
+
+
