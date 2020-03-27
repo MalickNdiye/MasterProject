@@ -1,9 +1,15 @@
 ---
-title: 'Jover''s model: description_2'
+title: 'Jover''s model: description'
 author: "Mam Malick Sy Ndiaye"
 date: "25/3/2020"
 output: html_document
+header-includes:
+  - \usepackage[document]{ragged2e}
 ---
+
+\justify
+
+`r lipsum[1]
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message= F, warning =F)
@@ -63,6 +69,7 @@ inf_matrix<- function(cpl_size, perfect=T){
 
 inf_matrix(10) #test the function
 ```
+
 In these kind of matrixes, the host rank correspond to the number of phages that can infect the host while the virus rank correspond to the number of host that are sensitive to the virus. For instance, H2 can be infected by 2 phages, P9 (can infect 9 hosts) and P10 (can infect 10 hosts).
 
 # Co-exsistance conditions
@@ -231,6 +238,7 @@ library(cowplot)
 plot_grid(Fig3_bar_r, Fig3_plot_H, Fig3_bar_hi, Fig3_plot_V, ncol = 2, nrow = 2) 
 kable(rank_info)
 ```
+
 As expected, stable co-exsistance is acheived between the members of the community.
 
 Now we can explore a situtation in wich condition (5) is not respected (Fig. 4 of *Jover et al*., 2013).
@@ -292,6 +300,7 @@ library(cowplot)
 plot_grid(Fig4_bar_r, Fig4_plot_H, Fig4_bar_hi, Fig4_plot_V, ncol = 2, nrow = 2)
 kable(rank_info)
 ```
+
 In this case, $r_1>r_2$, which makes the $Veq_1>0$, resulting in the extinction of $V_1$. Without $V_1$, only $V_2$ remains to control the bacterial growth. since $r_1>r_2$, $H_1$ end up outcompeting $H_2$ and driving it to extinction. 
 
 Until conditions (4-6) are satisfied, with a perfect infection network we can observe coexistance between an infinite number of host-phage pairs. We will simulate co-exsistance between 5 host-bacteria pairs (Fig. 6 of *jover et al.*, 2013).
@@ -361,6 +370,7 @@ library(cowplot)
 plot_grid(Fig6_bar_r, Fig6_plot_H, Fig6_bar_hi, Fig6_plot_V, ncol = 2, nrow = 2)
 kable(rank_info)
 ```
+
 As expected, co-existence is attained. 
 
 # Imperfectly nested Infection Matrix
@@ -377,6 +387,7 @@ inv_matrix
 
 paste("determinant:", det(inv_matrix)) # if the determinant is !=0, the matrix is invertible, otherwise is singular
 ```
+
 An imperfectly nested invertible matrix corresponds to an infection network where there is no overlap between the host ranges of the phages
 
 ## Example of singular matrix
@@ -388,6 +399,7 @@ sing_matrix
 
 paste("determinant:", det(sing_matrix)) # if the determinant is !=0, the matrix is invertible, otherwise is singular
 ```
+
 An imperfectly nested invertible matrix corresponds to an infection network where there is host range overlap between 2 or more phages. 
 
 To determinate wether a co-exsistence is possible in these two cases, jover and collegues express the equilibrium densities of viruses and hosts in the following terms:
@@ -395,7 +407,7 @@ To determinate wether a co-exsistence is possible in these two cases, jover and 
 
 An equation of type $AX=B$, where *A* is a matrix while *X* and *B* are vectors, has a single solution: $X=BA^{-1}$. Therefore, to solve the system A needs to be invertible and system (7) has a solution only if M is invertible. Thus, if there is _no_ host range overlap between phages, co-exsistance is possible in an imperfectly nested infection matrix. For every inverible infection network will exsist a combination of bacterial and viral life-history trais that will allow positive equilibrum densities for all members of the communities (similar to condition 4-6). We will simulate co-exsistance between 4 host-bacteria pairs in an imperfectly nested and inversible infection network (Fig. 8 of *jover et al.*, 2013).
 
-```{r}
+```{r simulation invertible matrix}
 library(deSolve)
 library(ggplot2)
 
@@ -438,6 +450,7 @@ Fig8_plot_V<- ggplot(data=mod_data)+
 library(cowplot)
 plot_grid(Fig8_plot_H, Fig8_plot_V, ncol = 1, nrow = 2)
 ```
+
 As expected, co-existance is attained. 
 
 If the matrix is singular, the system $AX=B$ has either no or infinite solutions. Thus, for all intents and porpuses co-exsistance is not possible when overlap occours between the host ranges of two or more phages. However, the authors point out that a solution can be found if we assume that the absorption rate and burst size of phages change from host to host. This assumption is likely more biologically correct and would trasorm the matrix M in a weighted matrix, insed of a binary matrix. Thus, each element of M would correspond to the weight of the virus life-history traits on each host. In this case, the matrix can be invertible also with host ranges overlap and a solution to system (7) can be found. (maybe we should include it in the model)
